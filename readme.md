@@ -131,6 +131,8 @@ For files exceeding 100,000 lines, mkmd automatically truncates the content to m
 - Go 1.24.5 or later
 - [tcell](https://github.com/gdamore/tcell) for terminal handling
 
-## License
+## 📄 License
 
-This project is open source. Feel free to use, modify, and distribute.
+under ☕️, check out [the-coffee-license](https://github.com/codinganovel/The-Coffee-License)
+
+I've included both licenses with the repo, do what you know is right. The licensing works by assuming your operating under good faith.
