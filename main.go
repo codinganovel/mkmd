@@ -27,11 +27,12 @@ type Editor struct {
 	searchTerm      string     // Current search term
 	searchIndex     int        // Current search result index
 	truncated       bool       // Whether the file was truncated due to size
-	maxLines        int        // Maximum lines to load (100,000 by default)
+	maxLines        int        // Maximum lines to load (10,000 by default)
 	selectionStart  bool       // Whether selection is active
 	selectionStartX int        // Selection start X position
 	selectionStartY int        // Selection start Y position
 	clipboard       string     // Internal clipboard for cut/copy/paste
+	currentChunk    int        // Current chunk number (0-based)
 }
 
 func NewEditor(filename string) (*Editor, error) {
@@ -73,11 +74,12 @@ func NewEditor(filename string) (*Editor, error) {
 		searchTerm:      "",
 		searchIndex:     0,
 		truncated:       false,
-		maxLines:        100000, // Default to 100,000 lines
+		maxLines:        10000, // Default to 10,000 lines
 		selectionStart:  false,
 		selectionStartX: 0,
 		selectionStartY: 0,
 		clipboard:       "",
+		currentChunk:    0,
 	}
 
 	// Load existing file if it exists
@@ -114,6 +116,130 @@ func (e *Editor) loadFile() error {
 	}
 
 	e.pushUndoState() // Save initial state after loading
+	return scanner.Err()
+}
+
+func (e *Editor) loadNextChunk() error {
+	if !e.truncated {
+		return nil // No more chunks if file wasn't truncated
+	}
+
+	// Check if current chunk has unsaved changes
+	if e.modified {
+		response := e.prompt("Save changes? (y/n): ")
+		if response == "y" {
+			if err := e.saveFile(); err != nil {
+				return fmt.Errorf("failed to save file: %v", err)
+			}
+		}
+		// If "n", continue and lose changes (same as Ctrl+C behavior)
+	}
+
+	file, err := os.Open(e.filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+	
+	// Skip lines to get to the next chunk
+	skipLines := (e.currentChunk + 1) * e.maxLines
+	for lineCount < skipLines && scanner.Scan() {
+		lineCount++
+	}
+
+	// Load the next chunk
+	e.lines = []string{}
+	chunkLines := 0
+	hasMoreContent := false
+	
+	for scanner.Scan() && chunkLines < e.maxLines {
+		e.lines = append(e.lines, scanner.Text())
+		chunkLines++
+	}
+	
+	// Check if there's more content after this chunk
+	if scanner.Scan() {
+		hasMoreContent = true
+	}
+
+	if len(e.lines) == 0 {
+		return nil // No more content
+	}
+
+	e.currentChunk++
+	e.truncated = hasMoreContent
+	
+	// Reset cursor to top
+	e.cursorX = 0
+	e.cursorY = 0
+	e.offsetY = 0
+	e.offsetX = 0
+	e.clearSelection()
+	e.clearSearch()
+	
+	e.pushUndoState()
+	return scanner.Err()
+}
+
+func (e *Editor) loadPrevChunk() error {
+	if e.currentChunk == 0 {
+		return nil // Already at first chunk
+	}
+
+	// Check if current chunk has unsaved changes
+	if e.modified {
+		response := e.prompt("Save changes? (y/n): ")
+		if response == "y" {
+			if err := e.saveFile(); err != nil {
+				return fmt.Errorf("failed to save file: %v", err)
+			}
+		}
+		// If "n", continue and lose changes (same as Ctrl+C behavior)
+	}
+
+	file, err := os.Open(e.filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+	
+	// Skip lines to get to the previous chunk
+	skipLines := (e.currentChunk - 1) * e.maxLines
+	for lineCount < skipLines && scanner.Scan() {
+		lineCount++
+	}
+
+	// Load the previous chunk
+	e.lines = []string{}
+	chunkLines := 0
+	
+	for scanner.Scan() && chunkLines < e.maxLines {
+		e.lines = append(e.lines, scanner.Text())
+		chunkLines++
+	}
+
+	if len(e.lines) == 0 {
+		e.lines = []string{""}
+	}
+
+	e.currentChunk--
+	e.truncated = true // If we can go back, there's always more content
+	
+	// Reset cursor to top
+	e.cursorX = 0
+	e.cursorY = 0
+	e.offsetY = 0
+	e.offsetX = 0
+	e.clearSelection()
+	e.clearSearch()
+	
+	e.pushUndoState()
 	return scanner.Err()
 }
 
@@ -572,6 +698,16 @@ func (e *Editor) paste() {
 }
 
 func (e *Editor) saveFile() error {
+	if e.currentChunk == 0 && !e.truncated {
+		// Simple case: small file or first chunk of non-truncated file
+		return e.saveEntireFile()
+	}
+	
+	// Complex case: we're in a chunk of a larger file
+	return e.saveChunkToFile()
+}
+
+func (e *Editor) saveEntireFile() error {
 	file, err := os.Create(e.filename)
 	if err != nil {
 		return err
@@ -588,6 +724,66 @@ func (e *Editor) saveFile() error {
 	if err := writer.Flush(); err != nil {
 		return err
 	}
+	e.modified = false
+	return nil
+}
+
+func (e *Editor) saveChunkToFile() error {
+	// Read the entire original file
+	originalFile, err := os.Open(e.filename)
+	if err != nil {
+		return err
+	}
+	defer originalFile.Close()
+
+	var allLines []string
+	scanner := bufio.NewScanner(originalFile)
+	for scanner.Scan() {
+		allLines = append(allLines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	// Calculate where this chunk starts in the original file
+	chunkStartLine := e.currentChunk * e.maxLines
+	chunkEndLine := chunkStartLine + e.maxLines
+	
+	// Clamp to actual file bounds
+	if chunkEndLine > len(allLines) {
+		chunkEndLine = len(allLines)
+	}
+	
+	// Replace the original chunk with our edited lines
+	var newAllLines []string
+	
+	// Keep everything before our chunk
+	newAllLines = append(newAllLines, allLines[:chunkStartLine]...)
+	
+	// Add our edited chunk
+	newAllLines = append(newAllLines, e.lines...)
+	
+	// Keep everything after our chunk
+	newAllLines = append(newAllLines, allLines[chunkEndLine:]...)
+
+	// Write the entire modified file
+	file, err := os.Create(e.filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	writer := bufio.NewWriter(file)
+	for i, line := range newAllLines {
+		if i > 0 {
+			writer.WriteString("\n")
+		}
+		writer.WriteString(line)
+	}
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+	
 	e.modified = false
 	return nil
 }
@@ -985,7 +1181,13 @@ func (e *Editor) drawStatusBar() {
 	}
 	truncated := ""
 	if e.truncated {
-		truncated = " [Truncated]"
+		if e.currentChunk > 0 {
+			truncated = " [Truncated - Ctrl+T/Ctrl+B]"
+		} else {
+			truncated = " [Truncated - Ctrl+T for more]"
+		}
+	} else if e.currentChunk > 0 {
+		truncated = " [Chunk view - Ctrl+B for prev]"
 	}
 	wordCount := e.wordCount()
 	status := fmt.Sprintf(" %s%s%s | Ln %d/%d, Col %d | Words: %d", filename, modified, truncated, e.cursorY+1, len(e.lines), e.cursorX+1, wordCount)
@@ -1088,6 +1290,14 @@ func (e *Editor) run() error {
 			case tcell.KeyCtrlG:
 				// Go to line
 				e.goToLine()
+
+			case tcell.KeyCtrlT:
+				// Next chunk
+				e.loadNextChunk()
+
+			case tcell.KeyCtrlB:
+				// Previous chunk (back)
+				e.loadPrevChunk()
 
 			case tcell.KeyCtrlX:
 				// Cut
@@ -1296,6 +1506,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nBasic controls:\n")
 		fmt.Fprintf(os.Stderr, "  Ctrl+D  Save and exit\n")
 		fmt.Fprintf(os.Stderr, "  Ctrl+C  Exit without saving\n")
+		fmt.Fprintf(os.Stderr, "  Ctrl+T  Next chunk (prompts to save if modified)\n")
+		fmt.Fprintf(os.Stderr, "  Ctrl+B  Previous chunk (prompts to save if modified)\n")
+		fmt.Fprintf(os.Stderr, "\nLarge file behavior:\n")
+		fmt.Fprintf(os.Stderr, "  - Files >10K lines are split into 10K line chunks\n")
+		fmt.Fprintf(os.Stderr, "  - Chunks show fixed line ranges (e.g., 1-10K, 10K-20K)\n")
+		fmt.Fprintf(os.Stderr, "  - Edits may cause content to 'spill' into adjacent chunks\n")
 		os.Exit(1)
 	}
 

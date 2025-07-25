@@ -32,7 +32,7 @@ A distraction-free terminal-based text editor built in Go. Think of it as a mode
 
 ### Modern Conveniences
 - **Mouse support** - Click to position cursor, scroll wheel for navigation
-- **Large file handling** - Intelligently loads first 100K lines to prevent crashes
+- **Large file handling** - Intelligently loads files in 10K line chunks with navigation support
 - **File auto-detection** - Automatically creates directories as needed
 - **Standard shortcuts** - All the shortcuts you expect: `Ctrl+S`, `Ctrl+A`, etc.
 
@@ -65,6 +65,8 @@ there is also binary in the bin folder. The one that has no specification is the
 - `Page Up/Down` - Scroll by screen
 - `Ctrl+A` - Select entire document
 - `Ctrl+G` - Go to line number
+- `Ctrl+T` - Next chunk (prompts to save if modified)
+- `Ctrl+B` - Previous chunk (prompts to save if modified)
 
 ### Text Selection
 - `Shift+Arrow keys` - Select text
@@ -124,7 +126,9 @@ The editor maintains the simplicity of classic terminal editors while adding mod
 
 ## Large File Handling
 
-For files exceeding 100,000 lines, mkmd automatically truncates the content to maintain responsiveness. The status bar will indicate when a file has been truncated with a `[Truncated]` indicator.
+For files exceeding 10,000 lines, mkmd loads content in chunks to maintain responsiveness. Use `Ctrl+T` to navigate to the next chunk and `Ctrl+B` to go back to the previous chunk. If you have unsaved changes, you'll be prompted to save before navigation. The status bar shows navigation hints and indicates when a file is chunked.
+
+**Note:** Chunks use fixed 10K line boundaries. Large edits may cause content to "spill" into adjacent chunks when navigating.
 
 ## Dependencies
 
