@@ -20,9 +20,9 @@ A distraction-free terminal-based text editor built in Go. Think of it as a mode
 - **Visual text selection** - `Shift+arrows` for precise text selection with blue highlighting
 - **Word selection** - `Ctrl+Shift+arrows` for word-based selection
 - **Select all** - `Ctrl+A` selects entire document
-- **Standard clipboard** - Familiar `Ctrl+X/C/V` for cut/copy/paste
+- **Standard clipboard** - Familiar `Ctrl+X/C/V` for cut/copy/paste (Ctrl+C copies when text is selected)
 - **Forward/backward delete** - Both `Backspace` and `Delete` keys supported
-- **Unlimited undo/redo** - Full `Ctrl+Z/Y` support for editing confidence
+- **Undo/redo** - Full `Ctrl+Z/Y` support (bounded history for performance)
 
 ### Search & Navigation
 - **Search with highlighting** - `Ctrl+F` for search with visual yellow highlighting
@@ -39,13 +39,17 @@ A distraction-free terminal-based text editor built in Go. Think of it as a mode
 ## Installation
 
 ```bash
-go build -o mkmd main.go
+go build -o mkmd .
 ```
 
 ## Usage
 
 ```bash
+# Open an existing file
 ./mkmd filename.md
+
+# Or launch with an empty buffer
+./mkmd
 ```
 
 there is also binary in the bin folder. The one that has no specification is the macOS one.
@@ -134,6 +138,32 @@ For files exceeding 10,000 lines, mkmd loads content in chunks to maintain respo
 
 - Go 1.24.5 or later
 - [tcell](https://github.com/gdamore/tcell) for terminal handling
+
+## Project Structure
+
+- `main.go` — minimal CLI entrypoint that parses the filename and launches the editor
+- `editor.go` — core editor state and behaviors (cursor, buffers, word movement, selection, undo/redo, scrolling)
+- `input.go` — keyboard and mouse handling, including movement, editing, search, chunk navigation
+- `render.go` — rendering pipeline (lines, selection, status bar) and prompts
+  - Horizontal scrolling uses display columns, so wide glyphs (e.g., CJK) align correctly
+  - Prompts are Unicode-aware; backspace deletes full runes
+- `file.go` — file I/O, including loading and chunked saving for large files
+- `mkmd_test.go` — comprehensive tests for chunking, Unicode-aware operations, selection, search, scrolling, and prompts
+- `bin/` — prebuilt binaries (platform-specific)
+- `test-text-files/` — sample large/text fixtures used during development
+
+## Development
+
+- Build: `go build -o mkmd .`
+- Run: `./mkmd filename.md`
+- Tests: `go test ./...`
+- Race detector: `go test -race ./...`
+- Lint/vet: `go vet ./...`
+
+Notes:
+- Large files (>10k lines) load in 10k-line chunks. Use `Ctrl+T`/`Ctrl+B` to navigate chunks.
+- Saving in chunked mode writes the current chunk back into the full file while preserving other chunks.
+- Status bar shows filename, modification status, line/column, word count, and chunk/truncated hints.
 
 ## 📄 License
 
